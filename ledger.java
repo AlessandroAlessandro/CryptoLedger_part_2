@@ -1,27 +1,48 @@
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.security.KeyFactory;
+import java.security.KeyPair;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.PrivateKey;
+import java.security.PublicKey;
+import java.security.spec.InvalidKeySpecException;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.security.spec.X509EncodedKeySpec;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map.Entry;
 import java.util.Scanner;
 
-public class ledger {
+public class ledger  {
 
   private HashMap<String, Long> userToBalanceMap = new HashMap<>();
   private LinkedHashMap<String, Transaction> txnChain = new LinkedHashMap<>();
   private static boolean isExit = false;
-  private static boolean isInteractive = false;
+  private static boolean isInteractive = true;
   private boolean isGenesisTransaction = true;
   private static boolean isVerbose = false;
+  public static String sig ;
 
-  public static void main(String[] args) {
-    ledger l = new ledger();
+  public static void main(String[] args) throws Exception {
+	  //default people, with default keys
+	  Person Alice = new Person ("Alice",loadKeys("Alice"));
+	  Person Bob = new Person("Bob",loadKeys("Bob"));	
+	  Person Gopesh = new Person ("Gopesh",loadKeys("Gopesh"));
+	   
+		
+	
+	ledger l = new ledger();
     Scanner sc = new Scanner(System.in);
     while (!isExit) {
       if (isInteractive) {
@@ -32,6 +53,9 @@ public class ledger {
         System.out.println("[D]ump");
         System.out.println("[W]ipe");
         System.out.println("[I]nteractive");
+        System.out.println("[R]ead key file");
+         System.out.println("[O]utput transaction block");
+         System.out.println("[C]heck transaction signature");
         System.out.println("[V]erbose");
         System.out.println("[B]alance");
         System.out.println("[E]xit");
@@ -42,14 +66,28 @@ public class ledger {
       switch (s) {
         case "f":
         case "file":
+        
           System.out.print("Supply file name: ");
           String fileName = sc.nextLine();
           try {
             FileReader fileReader = new FileReader(fileName);
             Scanner fileScanner = new Scanner(fileReader);
             while (fileScanner.hasNext()) {
-              l.validateAndAddTransaction(fileScanner.nextLine());
+            	String tran  = fileScanner.nextLine();
+            	if (fileScanner.hasNextLine()) {
+            		sig = fileScanner.nextLine();
+            	          		
+            	}
+            	
+              l.validateAndAddTransaction(tran,sig);
+
+              
+             
             }
+           
+            
+         
+            
           } catch (FileNotFoundException e) {
             System.err.println("Error: file " + fileName + " cannot be opened for reading");
           }
@@ -59,13 +97,15 @@ public class ledger {
         case "transaction":
           System.out.print("Enter Transaction: ");
           String t = sc.nextLine();
-          l.validateAndAddTransaction(t);
+          String sig = sc.nextLine();
+                    l.validateAndAddTransaction(t,sig);
+         
           break;
 
         case "p":
         case "print":
-          l.printLedger();
-          break;
+          l.printLedger("p");
+                   break;
 
         case "h":
         case "help":
@@ -112,7 +152,48 @@ public class ledger {
         case "interactive":
           isInteractive = !isInteractive;
           break;
+        case "r":
+        	System.out.print("supply <account name> <keyfilename>: ");
+            String userInput = sc.nextLine();
+            String[] splitString = userInput.split("\\s+");
+           
+            String fileName1 = splitString[1];
+           
+            try {
+             FileReader fileReader = new FileReader(fileName1);
+              Scanner fileScanner = new Scanner(fileReader);
+           //   while (fileScanner.hasNext()) {
+            	
+				Path path = Paths.get(fileName1);
+            	  byte[] bytes = Files.readAllBytes(path);
 
+            	  /* Generate public key. */
+            	  X509EncodedKeySpec ks = new X509EncodedKeySpec(bytes);
+            	  KeyFactory kf = KeyFactory.getInstance("RSA");
+            	  PublicKey pub = kf.generatePublic(ks);
+            	  //pubKey += fileScanner.nextLine();
+                System.out.println(pub);
+              
+            } catch (FileNotFoundException e) {
+              System.err.println("Error: file " + fileName1 + " cannot be opened for reading");
+            }
+         
+        	break;
+        case "o":
+        	l.printLedger("o");
+        	 l = new ledger();
+        	
+        	break;
+        case "c":
+        	System.out.print("supply <transactionID> <signature>: ");
+            String userInput1 = sc.nextLine();
+            String[] splitString1 = userInput1.split("\\s+");
+            String Tid = splitString1[0];
+            String sigg = splitString1[1];
+            verifySigAddBlock(Tid, sigg);
+            
+        	break;
+        
         case "v":
         case "verbose":
           isVerbose = !isVerbose;
@@ -143,6 +224,90 @@ public class ledger {
     sc.close();
   }
 
+  static boolean verifySigAddBlock(String Tid, String sig) throws Exception{
+      
+      String fullTrans = Person.getPerson(Tid).transString;
+      String forSig = fullTrans.replace((Person.getPerson(Tid).txnid+"; "), "");
+     
+      if (sig == "" || sig.length() == 0) {
+    	  
+    	System.err.println("\nTransactionID: " + Person.getPerson(Tid).txnid+"\nWith Signature: "+ sig + "\nis bad. Transaction was not stored");
+    	  return false;
+      }
+           
+      boolean isCorrect = RsaExample.verify(forSig, sig, Person.getPerson(Tid).getKeyPair().getPublic());
+            
+      if (isCorrect) {	  
+    	  return true;
+      }
+      else {
+      System.out.println(Person.getPerson(Tid).getTxnid() + ": bad");
+      System.err.println(Person.getPerson(Tid).getTxnid()
+          + ": Signature is invalid or is not present in the ledger");
+      return false;
+      }
+  }
+  
+  static boolean verifyGenesisSig(String fullTrans, String sig) throws Exception {
+	 
+      String forSig = fullTrans.substring(fullTrans.indexOf("; ")+2);
+    	
+    
+      if (sig == "" || sig.length() == 0) {
+    	  
+    	System.err.println("\nGenesis Transaction: \nWith Signature: "+ sig + "\nis bad. Transaction was not stored");
+    	  return false;
+      }
+           
+      
+      boolean isCorrect = RsaExample.verify(forSig, sig, Person.getPersons().get(0).getKeyPair().getPublic());
+    
+      
+      if (isCorrect) {
+    	 
+    	  return true;
+      }
+      
+      return false;
+  }
+   
+  public static KeyPair loadKeys(String keyf) throws Exception {
+	  PublicKey pub = null;
+	  PrivateKey pvt = null;
+	
+	  try {
+		 String keyp= keyf +".pub";
+      FileReader fileReader = new FileReader(keyp);
+       Scanner fileScanner = new Scanner(fileReader);
+     	
+			Path path = Paths.get(keyp);
+     	  byte[] bytes = Files.readAllBytes(path);
+
+     	  /* Generate public key. */
+     	  X509EncodedKeySpec ks = new X509EncodedKeySpec(bytes);
+     	  KeyFactory kf = KeyFactory.getInstance("RSA");
+     	  pub = kf.generatePublic(ks);
+     	  //pubKey += fileScanner.nextLine();
+     	   } catch (FileNotFoundException e) {
+       System.err.println("Error: file " + keyf + " cannot be opened for reading");
+     } 
+	  try {
+		  keyf= keyf +".key";
+	      FileReader fileReader = new FileReader(keyf);
+	       Scanner fileScanner = new Scanner(fileReader);
+     	 Path path1 = Paths.get(keyf);
+     	byte[] bytes1 = Files.readAllBytes(path1);
+     	 
+     	/* Generate private key. */
+     	PKCS8EncodedKeySpec ks1 = new PKCS8EncodedKeySpec(bytes1);
+     	KeyFactory kf1 = KeyFactory.getInstance("RSA");
+     	pvt = kf1.generatePrivate(ks1);
+	   } catch (FileNotFoundException e) {
+	       System.err.println("Error: file " + keyf + " cannot be opened for reading");
+	     } 
+     	return new KeyPair(pub, pvt);
+       
+  }
   private void dumpLedger(FileWriter fw) throws IOException {
     for (Entry<String, Transaction> s : txnChain.entrySet()) {
       fw.write(s.getValue().getTransactionString());
@@ -150,21 +315,34 @@ public class ledger {
     }
   }
 
-  private void printLedger() {
+  private void printLedger(String x) {
     if (txnChain.isEmpty()) {
       System.out.println("The ledger is currently empty");
     } else {
+    	if (x == "p") {
       for (Entry<String, Transaction> s : txnChain.entrySet()) {
         System.out.println(s.getValue().getTransactionString());
+      }
+    	}
+      if (x =="o") {
+    	  int i=1;
+    	  System.out.println(txnChain.size());
+    	  for (Entry<String, Transaction> s : txnChain.entrySet()) {
+    		  System.out.println(s.getValue().getTransactionString()+i++);
+    	        System.out.println(s.getValue().myPerson.mySig);
+    	      }
       }
     }
   }
 
-  private void validateAndAddTransaction(String inputTxn) {
+  private void validateAndAddTransaction(String inputTxn, String sig) throws Exception {
+
     inputTxn = inputTxn.replaceAll(" ", "").replaceAll(";", "; ").replaceAll(",", ", ");
     int indexofFirstSemiColon = inputTxn.indexOf("; ");
     String inputTxnID = inputTxn.substring(0, indexofFirstSemiColon);
     String givenTxnID = inputTxnID;
+    String genTxnID = givenTxnID;
+    String genSig = sig;
     if (!isValidTxnId(givenTxnID)) {
       System.out.println(givenTxnID + ": bad");
       System.err.println(givenTxnID
@@ -306,8 +484,7 @@ public class ledger {
     for (TxnIdIndexPair t : inputUTXOs) {
       if (txnChain.containsKey(t.getTxnId())) {
         if (!txnChain.get(t.getTxnId()).getOutputTransactions().get(t.getIndex()).isSpent()) {
-          inputAmount +=
-              txnChain.get(t.getTxnId()).getOutputTransactions().get(t.getIndex()).getAmount();
+          inputAmount +=txnChain.get(t.getTxnId()).getOutputTransactions().get(t.getIndex()).getAmount();
         } else {
           System.out.println(givenTxnID + ": bad");
           System.err
@@ -328,10 +505,42 @@ public class ledger {
     long outputAmount = 0;
     for (UTXO t : outputUTXOs) {
       outputAmount += t.getAmount();
+    
+      // here we create Genesis transaction person object and check its sig
+      //First generate a public/private key pair
+     if (isGenesisTransaction ) {
+      KeyPair pair=null;
+      Person myPerson;
+  	try {
+  		pair = RsaExample.generateKeyPair();
+  	} catch (Exception e) {
+  		// TODO Auto-generated catch block
+  		e.printStackTrace();
+  	}
+  	if (Person.getPersonName(t.getUser()) != null) {
+  		myPerson = Person.getPersonName(t.getUser());
+  		myPerson.setSig(sig);
+  	}
+  	else
+  	{
+  		myPerson = new Person (t.getUser(),pair);	
+  	myPerson.setTxnid(genTxnID);
+     myPerson.setSig(genSig);
+          myPerson.setTransationString(inputTxn);	
+  	}    
+     // check gen sig before making a transaction
+     if (!verifyGenesisSig(inputTxn,sig)) {
+    	 System.err.println("Genesis Transaction: "+genTxnID+" has an incorrect signature, was not added to ledger");
+    	      return;    
+     }
+    
+     } 
+
     }
     if (isGenesisTransaction || inputAmount == outputAmount) {
       if (isGenesisTransaction) {
         isGenesisTransaction = false;
+        
       }
       for (TxnIdIndexPair t : inputUTXOs) {
         UTXO currentTransaction =
@@ -340,6 +549,10 @@ public class ledger {
         userToBalanceMap.put(currentTransaction.getUser(),
             userToBalanceMap.get(currentTransaction.getUser()) - currentTransaction.getAmount());
         currentTransaction.setSpent(true);
+    
+    	
+    	
+     
       }
       for (UTXO t : outputUTXOs) {
         if (userToBalanceMap.containsKey(t.getUser())) {
@@ -348,9 +561,20 @@ public class ledger {
           userToBalanceMap.put(t.getUser(), t.getAmount());
         }
       }
-      txnChain.put(inputTxnID,
-          new Transaction(inputTxn, inputTxnID, inputSize, outputSize, inputUTXOs, outputUTXOs));
-      System.out.println(givenTxnID + ": good");
+    // verify the signature before adding to the ledger
+     Transaction temp = new Transaction(inputTxn, inputTxnID, inputSize, outputSize, inputUTXOs, outputUTXOs);
+      txnChain.put(inputTxnID,temp);
+           if (verifySigAddBlock(inputTxnID,sig)) {
+   	   System.out.println(givenTxnID + ": good"); 
+   	   // here we know that the transaction is good
+           }
+           else {
+        	   txnChain.remove(inputTxnID);
+           }
+        	   
+      
+   	   
+   	   
     } else {
       System.out.println(givenTxnID + ": bad");
       System.err.println(
@@ -362,16 +586,16 @@ public class ledger {
   private String isValidSHA1TxnId(String input, int index) throws NoSuchAlgorithmException {
     String hashInput = input.substring(index + 2, input.length()) + "\n";
     MessageDigest mDigest = MessageDigest.getInstance("SHA1");
-tring isValidSHA1TxnId(String input, int index) throws NoSuchAlgorithmException {
-    String hashInput = input.substring(index + 2, input.length()) + "\n";
-    MessageDigest mDigest = MessageDigest.getInstance("SHA1");
+//tring isValidSHA1TxnId(String input, int index) throws NoSuchAlgorithmException {
+//    String hashInput = input.substring(index + 2, input.length()) + "\n";
+//    MessageDigest mDigest = MessageDigest.getInstance("SHA1");
     byte[] result = mDigest.digest(hashInput.getBytes());
-    StringBuffer sb = new StringBuffer();
-    for (int i = 0; i < result.length; i++) {
-      sb.append(Integer.toString((result[i] & 0xff) + 0x100, 16).substring(1));
-    }
-    return sb.substring(0, 8).toLowerCase();
-  }
+//    StringBuffer sb = new StringBuffer();
+//    for (int i = 0; i < result.length; i++) {
+//      sb.append(Integer.toString((result[i] & 0xff) + 0x100, 16).substring(1));
+//    }
+//    return sb.substring(0, 8).toLowerCase();
+//  }
 
     StringBuffer sb = new StringBuffer();
     for (int i = 0; i < result.length; i++) {

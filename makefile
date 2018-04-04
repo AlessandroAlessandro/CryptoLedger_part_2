@@ -43,6 +43,8 @@ CLASSES = \
         Transaction.java \
         TxnIdIndexPair.java \
         UTXO.java \
+        RsaExample.java \
+        Person.java \
 
 #
 # the default make target entry
